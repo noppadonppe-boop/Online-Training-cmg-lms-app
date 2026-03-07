@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "cmg-hr-database"
+  },
+  "targets": {
+    "cmg-hr-database": {
+      "hosting": {
+        "site-03": [
+          "online-training-cmg-lms"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
