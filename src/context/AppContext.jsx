@@ -1,8 +1,8 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { users as mockUsers } from '../data/mockData';
 import { seedFirestore } from '../firebase/seed';
+import { useAuth } from './AuthContext';
 import {
-  fetchUsers,
   fetchRfts,
   fetchCourses,
   fetchEnrollments,
@@ -16,37 +16,57 @@ import {
 
 const AppContext = createContext(null);
 
+// Map a Firebase UserProfile to the legacy mock-compatible shape expected by LMS pages
+function toAppUser(profile) {
+  if (!profile) return null;
+  const initials = `${profile.firstName?.[0] || ''}${profile.lastName?.[0] || ''}`.toUpperCase();
+  // Primary role for legacy role-checks (first role wins, prefer non-MasterAdmin for LMS logic)
+  const lmsRoles = (profile.roles || []).filter(r => r !== 'MasterAdmin' && r !== 'Viewer' && r !== 'Creator');
+  const primaryRole = lmsRoles[0] || profile.roles?.[0] || 'Staff';
+  return {
+    id: profile.uid,
+    uid: profile.uid,
+    name: `${profile.firstName} ${profile.lastName}`.trim(),
+    role: primaryRole,
+    roles: profile.roles || [],
+    avatar: initials || '?',
+    email: profile.email,
+    photoURL: profile.photoURL || null,
+    position: profile.position || '',
+  };
+}
+
 export function AppProvider({ children }) {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [users, setUsers] = useState([]);
+  const { userProfile, allUsers: authAllUsers } = useAuth();
+
   const [rfts, setRfts] = useState([]);
   const [courses, setCourses] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Current user derived from Firebase auth — updates reactively
+  const currentUser = useMemo(() => toAppUser(userProfile), [userProfile]);
+
+  // All users: prefer live authAllUsers (Firestore auth users), fall back to mockUsers
+  const users = useMemo(() => {
+    if (authAllUsers && authAllUsers.length > 0) {
+      return authAllUsers.map(toAppUser).filter(Boolean);
+    }
+    return mockUsers;
+  }, [authAllUsers]);
+
   useEffect(() => {
     const init = async () => {
       try {
         await seedFirestore();
 
-        const [dbUsers, dbRfts, dbCourses, dbEnrollments] = await Promise.all([
-          fetchUsers(),
+        const [dbRfts, dbCourses, dbEnrollments] = await Promise.all([
           fetchRfts(),
           fetchCourses(),
           fetchEnrollments(),
         ]);
 
-        // Restore user order from mockData to keep consistent ordering
-        const orderedUsers = mockUsers.map((mu) => {
-          const found = dbUsers.find((u) => u.id === mu.id);
-          return found ? found : mu;
-        });
-
-        setUsers(orderedUsers);
-        setCurrentUser(orderedUsers[0]);
-
-        // Sort rfts and courses by id for consistent display
         setRfts(dbRfts.sort((a, b) => a.id.localeCompare(b.id)));
         setCourses(dbCourses.sort((a, b) => a.id.localeCompare(b.id)));
         setEnrollments(dbEnrollments);
@@ -61,16 +81,14 @@ export function AppProvider({ children }) {
     init();
   }, []);
 
-  const switchUser = (userId) => {
-    const user = users.find((u) => u.id === userId);
-    if (user) setCurrentUser(user);
-  };
+  // switchUser is kept for any legacy references (no-op in auth mode)
+  const switchUser = () => {};
 
   const submitRft = async (rftData) => {
     const newRft = {
       ...rftData,
       id: `rft${Date.now()}`,
-      requestorId: currentUser.id,
+      requestorId: currentUser?.id || '',
       date: new Date().toISOString().split('T')[0],
       status: 'Pending HRM',
       rejectNote: '',

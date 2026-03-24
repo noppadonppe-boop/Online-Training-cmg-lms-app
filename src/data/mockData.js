@@ -4,6 +4,9 @@ export const ROLES = {
   GM: 'GM',
   MD: 'MD',
   STAFF: 'Staff',
+  MASTER_ADMIN: 'MasterAdmin',
+  VIEWER: 'Viewer',
+  CREATOR: 'Creator',
 };
 
 export const RFT_STATUS = {

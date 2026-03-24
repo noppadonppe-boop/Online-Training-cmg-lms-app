@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   GraduationCap, BookOpen, Clock, CheckCircle, Play,
   Lock, Unlock, ArrowRight, RotateCcw, Award, ChevronRight,
@@ -86,9 +86,43 @@ function useCountdown(totalSeconds, onComplete) {
   return { remaining, running, done, start, restart, mm, ss, percent };
 }
 
+/* ─── shuffle helper ────────────────────────────────────────────────────────── */
+function shuffleChoices(choices) {
+  const arr = [...choices];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/* Re-label shuffled choices ก ข ค ง and update answer key */
+const CHOICE_LABELS_TH = ['ก', 'ข', 'ค', 'ง'];
+function buildShuffledQuestion(q) {
+  const shuffled = shuffleChoices(q.choices);
+  const correctChoice = q.choices.find(c => c.label === q.answer);
+  const newAnswerIndex = shuffled.findIndex(c => c.id === correctChoice?.id);
+  return {
+    ...q,
+    choices: shuffled.map((c, i) => ({ ...c, label: CHOICE_LABELS_TH[i] })),
+    answer: CHOICE_LABELS_TH[newAnswerIndex] ?? q.answer,
+  };
+}
+
 /* ─── Test Engine ──────────────────────────────────────────────────────────── */
-function TestEngine({ questions, type, onComplete, enrollment }) {
-  const totalQ = questions.length;
+function TestEngine({ questions, type, onComplete }) {
+  const isPost = type === 'post';
+
+  /* For post-test: shuffle choices once on mount (stable per render via useMemo) */
+  const displayQuestions = useMemo(() => {
+    if (!isPost) return questions;
+    return questions.map(q =>
+      q.type === 'multiple' && q.choices?.length ? buildShuffledQuestion(q) : q
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  /* intentionally empty deps — shuffle once on mount */
+
+  const totalQ = displayQuestions.length;
   const [answers, setAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(null);
@@ -103,7 +137,7 @@ function TestEngine({ questions, type, onComplete, enrollment }) {
 
   const handleSubmit = () => {
     if (!allAnswered) return;
-    const correct = questions.filter(q => answers[q.id] === q.answer).length;
+    const correct = displayQuestions.filter(q => answers[q.id] === q.answer).length;
     setScore(correct);
     setSubmitted(true);
     onComplete(correct, answers);
@@ -113,11 +147,19 @@ function TestEngine({ questions, type, onComplete, enrollment }) {
 
   return (
     <div>
+      {/* Post-test shuffle notice */}
+      {isPost && (
+        <div className="mb-4 flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+          <span className="text-base">🔀</span>
+          <p className="text-xs text-amber-700 font-medium">ลำดับตัวเลือกถูกสลับใหม่ — คำถามเหมือนเดิม คำตอบถูกต้องมีเพียง 1 ข้อ</p>
+        </div>
+      )}
+
       {/* Progress bar */}
       <div className="mb-6">
         <div className="flex justify-between items-center mb-2">
-          <span className="text-xs font-semibold text-slate-500">{answered}/{totalQ} answered</span>
-          <span className="text-xs font-semibold text-blue-600">{type === 'pre' ? 'Pre-Test' : 'Post-Test'}</span>
+          <span className="text-xs font-semibold text-slate-500">{answered}/{totalQ} ตอบแล้ว</span>
+          <span className="text-xs font-semibold text-blue-600">{isPost ? 'Post-Test' : 'Pre-Test'}</span>
         </div>
         <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
           <div
@@ -128,56 +170,107 @@ function TestEngine({ questions, type, onComplete, enrollment }) {
       </div>
 
       {/* Questions */}
-      <div className="space-y-4 mb-6">
-        {questions.map((q, i) => {
+      <div className="space-y-5 mb-6">
+        {displayQuestions.map((q, i) => {
           const ans = answers[q.id];
           const isCorrect = submitted && ans === q.answer;
           const isWrong = submitted && ans !== q.answer;
+          const isMultiple = q.type === 'multiple' && q.choices?.length;
+
           return (
             <div key={q.id} className={`p-4 rounded-2xl border-2 transition-all ${
               submitted
-                ? isCorrect ? 'border-emerald-300 bg-emerald-50' : isWrong ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'
+                ? isCorrect ? 'border-emerald-300 bg-emerald-50'
+                  : isWrong ? 'border-red-300 bg-red-50'
+                  : 'border-slate-200 bg-slate-50'
                 : ans !== undefined ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'
             }`}>
+              {/* Question header */}
               <div className="flex items-start gap-3 mb-3">
                 <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                   submitted
-                    ? isCorrect ? 'bg-emerald-500 text-white' : isWrong ? 'bg-red-500 text-white' : 'bg-slate-300 text-white'
+                    ? isCorrect ? 'bg-emerald-500 text-white'
+                      : isWrong ? 'bg-red-500 text-white'
+                      : 'bg-slate-300 text-white'
                     : 'bg-blue-100 text-blue-700'
                 }`}>
                   {submitted ? (isCorrect ? '✓' : isWrong ? '✗' : i + 1) : i + 1}
                 </span>
                 <p className="text-sm font-medium text-slate-800 leading-relaxed flex-1">{q.text}</p>
               </div>
-              <div className="flex gap-3 ml-10">
-                {[true, false].map(val => {
-                  const selected = ans === val;
-                  const isThisCorrect = submitted && q.answer === val;
-                  const isThisWrong = submitted && selected && !isThisCorrect;
-                  return (
-                    <button
-                      key={String(val)}
-                      disabled={submitted}
-                      onClick={() => handleAnswer(q.id, val)}
-                      className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-bold border-2 transition-all ${
-                        submitted
-                          ? isThisCorrect
-                            ? 'bg-emerald-500 border-emerald-500 text-white'
-                            : isThisWrong
-                            ? 'bg-red-500 border-red-500 text-white'
+
+              {/* Multiple Choice ก ข ค ง */}
+              {isMultiple ? (
+                <div className="space-y-2 ml-10">
+                  {q.choices.map(c => {
+                    const selected = ans === c.label;
+                    const isThisCorrect = submitted && q.answer === c.label;
+                    const isThisWrong = submitted && selected && !isThisCorrect;
+                    return (
+                      <button
+                        key={c.id}
+                        disabled={submitted}
+                        onClick={() => handleAnswer(q.id, c.label)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 text-sm text-left transition-all ${
+                          submitted
+                            ? isThisCorrect
+                              ? 'bg-emerald-500 border-emerald-500 text-white font-bold'
+                              : isThisWrong
+                              ? 'bg-red-500 border-red-500 text-white'
+                              : selected
+                              ? 'bg-slate-300 border-slate-300 text-white'
+                              : 'bg-white border-slate-200 text-slate-400'
                             : selected
-                            ? 'bg-slate-300 border-slate-300 text-white'
-                            : 'bg-white border-slate-200 text-slate-400'
-                          : selected
-                          ? val ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-red-500 border-red-500 text-white'
-                          : 'bg-white border-slate-300 text-slate-600 hover:border-blue-400 hover:bg-blue-50'
-                      }`}
-                    >
-                      {val ? 'TRUE' : 'FALSE'}
-                    </button>
-                  );
-                })}
-              </div>
+                            ? 'bg-blue-500 border-blue-500 text-white font-semibold'
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50'
+                        }`}
+                      >
+                        <span className={`w-6 h-6 rounded-full text-xs font-black flex items-center justify-center shrink-0 border-2 ${
+                          submitted
+                            ? isThisCorrect ? 'border-white bg-white/20 text-white'
+                              : isThisWrong ? 'border-white bg-white/20 text-white'
+                              : selected ? 'border-white bg-white/20 text-white'
+                              : 'border-slate-300 text-slate-400'
+                            : selected ? 'border-white bg-white/20 text-white'
+                            : 'border-slate-300 text-slate-500'
+                        }`}>
+                          {c.label}
+                        </span>
+                        <span className="flex-1">{c.text}</span>
+                        {submitted && isThisCorrect && <CheckCircle className="w-4 h-4 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* True / False (legacy) */
+                <div className="flex gap-3 ml-10">
+                  {[true, false].map(val => {
+                    const selected = ans === val;
+                    const isThisCorrect = submitted && q.answer === val;
+                    const isThisWrong = submitted && selected && !isThisCorrect;
+                    return (
+                      <button
+                        key={String(val)}
+                        disabled={submitted}
+                        onClick={() => handleAnswer(q.id, val)}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-bold border-2 transition-all ${
+                          submitted
+                            ? isThisCorrect ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : isThisWrong ? 'bg-red-500 border-red-500 text-white'
+                              : selected ? 'bg-slate-300 border-slate-300 text-white'
+                              : 'bg-white border-slate-200 text-slate-400'
+                            : selected
+                            ? val ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-red-500 border-red-500 text-white'
+                            : 'bg-white border-slate-300 text-slate-600 hover:border-blue-400 hover:bg-blue-50'
+                        }`}
+                      >
+                        {val ? 'TRUE' : 'FALSE'}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
@@ -191,8 +284,8 @@ function TestEngine({ questions, type, onComplete, enrollment }) {
           onClick={handleSubmit}
         >
           <CheckCircle className="w-5 h-5" />
-          Submit {type === 'pre' ? 'Pre-Test' : 'Post-Test'}
-          {!allAnswered && ` (${totalQ - answered} remaining)`}
+          {isPost ? 'ส่งคำตอบ Post-Test' : 'ส่งคำตอบ Pre-Test'}
+          {!allAnswered && ` (ยังเหลือ ${totalQ - answered} ข้อ)`}
         </Button>
       )}
 
@@ -213,10 +306,10 @@ function TestEngine({ questions, type, onComplete, enrollment }) {
             </ProgressRing>
           </div>
           <p className={`text-lg font-bold mb-1 ${passed ? 'text-emerald-700' : 'text-red-700'}`}>
-            {passed ? '🎉 Well done!' : '😔 Not quite there'}
+            {passed ? '🎉 ยอดเยี่ยม!' : '😔 ยังไม่ผ่าน'}
           </p>
           <p className={`text-sm ${passed ? 'text-emerald-600' : 'text-red-600'}`}>
-            Score: {score}/{totalQ} &nbsp;·&nbsp; Pass mark: {Math.ceil(totalQ * PASS_THRESHOLD)}/{totalQ} ({Math.round(PASS_THRESHOLD * 100)}%)
+            คะแนน: {score}/{totalQ} &nbsp;·&nbsp; เกณฑ์ผ่าน: {Math.ceil(totalQ * PASS_THRESHOLD)}/{totalQ} ({Math.round(PASS_THRESHOLD * 100)}%)
           </p>
         </div>
       )}
@@ -246,6 +339,27 @@ function ClassroomView({ course, enrollment, onTimerComplete, timerDone }) {
           />
         </div>
       </div>
+
+      {/* Slide file download */}
+      {course.slideFileUrl && (
+        <div className="p-4 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0">
+            <BookOpen className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-emerald-800 mb-0.5">📄 Slide File Available</p>
+            <p className="text-xs text-emerald-600">Download the presentation slides for this course</p>
+          </div>
+          <a
+            href={course.slideFileUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors shrink-0"
+          >
+            Download
+          </a>
+        </div>
+      )}
 
       {/* Timer card */}
       <div className={`relative rounded-2xl p-6 border-2 transition-all overflow-hidden ${
@@ -398,13 +512,15 @@ function ClassroomPage({ courseId, onBack }) {
   const currentEnrollment = getEnrollment(course.id, currentUser.id);
 
   /* Stage: PRE-TEST complete */
-  const handlePreTestComplete = (score, answers) => {
-    const enr = enrollStaff(course.id, currentUser.id);
-    updateEnrollment(enr.id, {
-      status: ENROLLMENT_STATUS.PRETEST_DONE,
-      preTestScore: score,
-      preTestAnswers: answers,
-    });
+  const handlePreTestComplete = async (score, answers) => {
+    const enr = await enrollStaff(course.id, currentUser.id);
+    if (enr?.id) {
+      await updateEnrollment(enr.id, {
+        status: ENROLLMENT_STATUS.PRETEST_DONE,
+        preTestScore: score,
+        preTestAnswers: answers,
+      });
+    }
     setTimerDone(false);
     setStage('learning');
   };
@@ -421,6 +537,7 @@ function ClassroomPage({ courseId, onBack }) {
   /* POST-TEST complete */
   const handlePostTestComplete = (score, answers) => {
     const enr = getEnrollment(course.id, currentUser.id);
+    if (!enr) return;
     const passed = score / totalQ >= PASS_THRESHOLD;
     updateEnrollment(enr.id, {
       status: passed ? ENROLLMENT_STATUS.PASSED : ENROLLMENT_STATUS.POSTTEST_FAILED,
@@ -779,16 +896,6 @@ export default function LearnPage() {
   const { currentUser, courses, rfts, enrollments, enrollStaff, getEnrollment } = useApp();
   const [activeCourseId, setActiveCourseId] = useState(null);
 
-  if (currentUser.role !== ROLES.STAFF) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-        <GraduationCap className="w-12 h-12 mb-3 opacity-30" />
-        <p className="font-medium text-base">My Learning is only available for Training Staff.</p>
-        <p className="text-sm mt-1">Please switch to a Staff user to access the Learner Portal.</p>
-      </div>
-    );
-  }
-
   if (activeCourseId) {
     return (
       <ClassroomPage
@@ -798,8 +905,9 @@ export default function LearnPage() {
     );
   }
 
-  /* All courses this user is invited to (listed in RFT targetAttendees) */
+  /* All courses this user is tagged in (course.assignedUsers) or RFT targetAttendees fallback */
   const invitedCourses = courses.filter(c => {
+    if (c.assignedUsers?.includes(currentUser.id)) return true;
     const rft = rfts.find(r => r.id === c.rftId);
     return rft?.targetAttendees?.includes(currentUser.id);
   });

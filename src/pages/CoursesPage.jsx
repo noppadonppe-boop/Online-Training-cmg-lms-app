@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   BookOpen, Plus, Trash2, CheckCircle,
   Link2, Clock, Eye, Pencil, ArrowRight, Play, ListChecks,
-  GraduationCap, Save, Copy, AlertTriangle
+  GraduationCap, Save, Copy, AlertTriangle, X, Users, Search, UserCheck,
+  Sparkles, Loader2, RefreshCw
 } from 'lucide-react';
+import { generateQuestionsFromYouTube } from '../services/aiService';
 import { useApp } from '../context/AppContext';
 import { ROLES, RFT_STATUS } from '../data/mockData';
 import {
@@ -24,18 +26,30 @@ const THUMB_ICONS = {
   cyber: '🛡️', leadership: '🎯', excel: '📊', customer: '🤝', safety: '🦺', default: '📚',
 };
 
+const CHOICE_LABELS = ['ก', 'ข', 'ค', 'ง'];
+
 function QuestionBuilder({ questions, setQuestions, readOnly = false }) {
   const addQuestion = () => {
     if (questions.length >= 10) return;
     setQuestions(prev => [...prev, {
       id: `q_${Date.now()}`,
       text: '',
-      answer: true,
+      type: 'multiple',
+      choices: CHOICE_LABELS.map((label, i) => ({ id: `c_${Date.now()}_${i}`, label, text: '' })),
+      answer: 'ก',
     }]);
   };
 
   const updateQ = (id, field, value) => {
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
+  };
+
+  const updateChoice = (qId, choiceId, text) => {
+    setQuestions(prev => prev.map(q =>
+      q.id === qId
+        ? { ...q, choices: q.choices.map(c => c.id === choiceId ? { ...c, text } : c) }
+        : q
+    ));
   };
 
   const removeQ = (id) => {
@@ -44,49 +58,67 @@ function QuestionBuilder({ questions, setQuestions, readOnly = false }) {
 
   return (
     <div>
-      <div className="space-y-3 mb-3">
+      <div className="space-y-4 mb-3">
         {questions.map((q, i) => (
-          <div key={q.id} className="flex gap-3 items-start p-3 bg-slate-50 rounded-xl border border-slate-200">
-            <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0 mt-1">
-              {i + 1}
-            </div>
-            <div className="flex-1 space-y-2">
+          <div key={q.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+            <div className="flex gap-3 items-start mb-3">
+              <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0 mt-1">
+                {i + 1}
+              </div>
               <textarea
                 rows={2}
                 value={q.text}
                 onChange={e => updateQ(q.id, 'text', e.target.value)}
-                placeholder="Enter question statement..."
+                placeholder="คำถาม..."
                 disabled={readOnly}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none placeholder:text-slate-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none placeholder:text-slate-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
               />
               {!readOnly && (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-semibold text-slate-500">Correct Answer:</span>
-                  {[true, false].map(val => (
-                    <button
-                      key={String(val)}
-                      type="button"
-                      onClick={() => updateQ(q.id, 'answer', val)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${
-                        q.answer === val
-                          ? val ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-red-500 text-white border-red-500'
-                          : 'bg-white text-slate-500 border-slate-300 hover:border-slate-400'
-                      }`}
-                    >
-                      {val ? 'TRUE' : 'FALSE'}
-                    </button>
-                  ))}
-                </div>
+                <button
+                  onClick={() => removeQ(q.id)}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
-            {!readOnly && (
-              <button
-                onClick={() => removeQ(q.id)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors shrink-0"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
+            {/* Choices */}
+            <div className="ml-9 space-y-2">
+              {(q.choices || []).map(c => (
+                <div key={c.id} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={readOnly}
+                    onClick={() => !readOnly && updateQ(q.id, 'answer', c.label)}
+                    className={`w-7 h-7 rounded-full text-xs font-bold border-2 shrink-0 transition-all ${
+                      q.answer === c.label
+                        ? 'bg-emerald-500 border-emerald-500 text-white'
+                        : 'border-slate-300 text-slate-500 hover:border-emerald-400'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                  <input
+                    type="text"
+                    value={c.text}
+                    disabled={readOnly}
+                    onChange={e => updateChoice(q.id, c.id, e.target.value)}
+                    placeholder={`ตัวเลือก ${c.label}...`}
+                    className={`flex-1 px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      q.answer === c.label
+                        ? 'border-emerald-300 bg-emerald-50 font-medium text-emerald-800'
+                        : 'border-slate-200 bg-white'
+                    } disabled:bg-slate-50 disabled:cursor-not-allowed`}
+                  />
+                  {readOnly && q.answer === c.label && (
+                    <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  )}
+                </div>
+              ))}
+              {!readOnly && (
+                <p className="text-[11px] text-slate-400 mt-1">กดปุ่ม <span className="font-bold">ก ข ค ง</span> เพื่อเลือกคำตอบที่ถูกต้อง</p>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -98,32 +130,60 @@ function QuestionBuilder({ questions, setQuestions, readOnly = false }) {
           disabled={questions.length >= 10}
         >
           <Plus className="w-3.5 h-3.5" />
-          Add Question {questions.length > 0 && `(${questions.length}/10)`}
+          เพิ่มคำถาม {questions.length > 0 && `(${questions.length}/10)`}
         </Button>
       )}
       {questions.length === 0 && (
-        <p className="text-xs text-slate-400 italic">No questions added yet.</p>
+        <p className="text-xs text-slate-400 italic">ยังไม่มีคำถาม</p>
       )}
     </div>
   );
 }
 
 function CourseBuilderModal({ open, onClose, rft }) {
-  const { createCourse, updateCourse, courses } = useApp();
+  const { createCourse, updateCourse, courses, users } = useApp();
   const existing = rft ? courses.find(c => c.rftId === rft.id) : null;
 
   const [activeStep, setActiveStep] = useState(0);
   const [preQuestions, setPreQuestions] = useState(existing?.preTestQuestions || []);
   const [materialLink, setMaterialLink] = useState(existing?.materialLink || '');
+  const [slideFileUrl, setSlideFileUrl] = useState(existing?.slideFileUrl || '');
   const [watchTime, setWatchTime] = useState(existing?.requiredWatchTimeMinutes || '');
+  const [assignedUsers, setAssignedUsers] = useState(existing?.assignedUsers || []);
+  const [userSearch, setUserSearch] = useState('');
   const [errors, setErrors] = useState({});
   const [saved, setSaved] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiSuccess, setAiSuccess] = useState(false);
+
+  const handleAIGenerate = async () => {
+    if (!materialLink.trim()) {
+      setAiError('กรุณาวาง YouTube URL ในช่อง Material Link ก่อน');
+      return;
+    }
+    setAiGenerating(true);
+    setAiError('');
+    setAiSuccess(false);
+    try {
+      const questions = await generateQuestionsFromYouTube(materialLink);
+      setPreQuestions(questions);
+      setAiSuccess(true);
+      setActiveStep(0);
+      setTimeout(() => setAiSuccess(false), 3000);
+    } catch (err) {
+      setAiError(err.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
 
   const postQuestions = preQuestions;
 
   const steps = [
     { label: 'Pre-Test Builder', icon: ListChecks },
     { label: 'Learning Material', icon: Play },
+    { label: 'Assign Users', icon: Users },
     { label: 'Post-Test Review', icon: GraduationCap },
   ];
 
@@ -153,7 +213,9 @@ function CourseBuilderModal({ open, onClose, rft }) {
       preTestQuestions: preQuestions,
       postTestQuestions: preQuestions,
       materialLink,
+      slideFileUrl: slideFileUrl || null,
       requiredWatchTimeMinutes: Number(watchTime),
+      assignedUsers,
       thumbnail: 'cyber',
     };
     if (existing) {
@@ -164,6 +226,17 @@ function CourseBuilderModal({ open, onClose, rft }) {
     setSaved(true);
     setTimeout(() => { setSaved(false); onClose(); }, 1000);
   };
+
+  const toggleUser = (uid) => {
+    setAssignedUsers(prev =>
+      prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+    );
+  };
+
+  const filteredUsers = users.filter(u =>
+    u.name.toLowerCase().includes(userSearch.toLowerCase()) ||
+    u.email?.toLowerCase().includes(userSearch.toLowerCase())
+  );
 
   if (!rft) return null;
 
@@ -195,9 +268,15 @@ function CourseBuilderModal({ open, onClose, rft }) {
           <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-700">
-              <strong>Note:</strong> Answers are hidden from students during the test. Add up to 10 True/False questions. The Post-Test will auto-clone these questions.
+              <strong>หมายเหตุ:</strong> คำตอบที่ถูกต้องจะถูกซ่อนจากผู้เรียน — ใส่คำถามได้สูงสุด 10 ข้อ Post-Test จะใช้คำถามเดิมแต่<strong>สลับลำดับตัวเลือก</strong>อัตโนมัติ
             </p>
           </div>
+          {aiSuccess && (
+            <div className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-500" />
+              <p className="text-xs text-emerald-700 font-semibold">✨ AI สร้างคำถาม {preQuestions.length} ข้อเรียบร้อยแล้ว! ตรวจสอบและแก้ไขได้ด้านล่าง</p>
+            </div>
+          )}
           <FormField label="Pre-Test Questions" required hint={`${preQuestions.length}/10 questions added`}>
             <QuestionBuilder questions={preQuestions} setQuestions={setPreQuestions} />
             {errors.questions && <p className="text-xs text-red-500 mt-2">{errors.questions}</p>}
@@ -208,14 +287,44 @@ function CourseBuilderModal({ open, onClose, rft }) {
       {/* Step 1: Material */}
       {activeStep === 1 && (
         <div>
-          <FormField label="Material / Video Link" required hint="Paste a YouTube embed URL or any direct video/document link">
+          <FormField label="Material / Video Link" required hint="วาง YouTube URL หรือ embed link — ใช้ URL นี้สำหรับ AI สร้างคำถามด้วย">
             <Input
               value={materialLink}
-              onChange={e => setMaterialLink(e.target.value)}
-              placeholder="https://www.youtube.com/embed/..."
+              onChange={e => { setMaterialLink(e.target.value); setAiError(''); }}
+              placeholder="https://www.youtube.com/watch?v=... หรือ embed URL"
             />
             {errors.materialLink && <p className="text-xs text-red-500 mt-1">{errors.materialLink}</p>}
           </FormField>
+          
+          <FormField label="Slide File (Optional)" hint="วาง URL ลิงก์ไปยัง Google Drive, Dropbox หรือ PDF">
+            <div className="space-y-2">
+              <div className="relative">
+                <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  value={slideFileUrl}
+                  onChange={e => setSlideFileUrl(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/..."
+                  className="pl-9"
+                />
+              </div>
+              {slideFileUrl && (
+                <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Link2 className="w-4 h-4 text-blue-600 shrink-0" />
+                  <a href={slideFileUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-700 truncate hover:underline flex-1">
+                    {slideFileUrl}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setSlideFileUrl('')}
+                    className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </FormField>
+
           <FormField label="Required Watch Time (minutes)" required hint="Students must watch for this duration before taking the Post-Test">
             <div className="flex items-center gap-2">
               <Input
@@ -243,11 +352,137 @@ function CourseBuilderModal({ open, onClose, rft }) {
               </div>
             </div>
           )}
+
+          {/* AI Generate Panel */}
+          <div className="mt-5 p-4 rounded-2xl border-2 border-dashed border-violet-200 bg-gradient-to-br from-violet-50 to-purple-50">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5 text-violet-600" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-violet-800">✨ สร้างคำถามด้วย AI</p>
+                <p className="text-xs text-violet-600 mt-0.5">
+                  Gemini จะวิเคราะห์วิดีโอ YouTube ข้างต้นแล้วสร้าง <strong>10 คำถาม</strong> ปรนัย ก ข ค ง อัตโนมัติ
+                </p>
+              </div>
+            </div>
+
+            {aiError && (
+              <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-600">{aiError}</p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAIGenerate}
+                disabled={aiGenerating || !materialLink.trim()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all shadow-sm shadow-violet-200"
+              >
+                {aiGenerating
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> กำลังประมวลผล...</>
+                  : <><Sparkles className="w-4 h-4" /> Generate คำถาม 10 ข้อ</>
+                }
+              </button>
+              {preQuestions.length > 0 && !aiGenerating && (
+                <button
+                  type="button"
+                  onClick={handleAIGenerate}
+                  className="flex items-center gap-1.5 px-3 py-2.5 text-violet-600 hover:bg-violet-100 text-xs font-semibold rounded-xl transition-colors border border-violet-200"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> สร้างใหม่
+                </button>
+              )}
+            </div>
+
+            {aiGenerating && (
+              <div className="mt-3 space-y-2">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-4 bg-violet-100 rounded-full animate-pulse" style={{ width: `${70 + i * 10}%` }} />
+                ))}
+                <p className="text-xs text-violet-500 mt-2">🤖 Gemini กำลังวิเคราะห์วิดีโอ...</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Step 2: Post-test review */}
+      {/* Step 2: Assign Users */}
       {activeStep === 2 && (
+        <div>
+          <div className="mb-4 p-3 bg-violet-50 border border-violet-200 rounded-xl flex items-start gap-2">
+            <UserCheck className="w-4 h-4 text-violet-500 shrink-0 mt-0.5" />
+            <p className="text-xs text-violet-700">
+              <strong>Tag users</strong> ที่ต้องการให้เข้าเรียนหลักสูตรนี้ — ผู้ใช้ที่ถูก tag จะเห็นคอร์สในหน้า My Learning
+            </p>
+          </div>
+
+          {/* Search */}
+          <div className="relative mb-3">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={userSearch}
+              onChange={e => setUserSearch(e.target.value)}
+              placeholder="ค้นหาชื่อหรืออีเมล..."
+              className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+          </div>
+
+          {/* Selected count */}
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-slate-500">ผู้ใช้ทั้งหมด {filteredUsers.length} คน</span>
+            {assignedUsers.length > 0 && (
+              <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
+                เลือกแล้ว {assignedUsers.length} คน
+              </span>
+            )}
+          </div>
+
+          {/* User list */}
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            {filteredUsers.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 py-6">ไม่พบผู้ใช้</p>
+            ) : filteredUsers.map(u => {
+              const selected = assignedUsers.includes(u.id);
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => toggleUser(u.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${
+                    selected
+                      ? 'border-violet-400 bg-violet-50'
+                      : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/40'
+                  }`}
+                >
+                  {u.photoURL ? (
+                    <img src={u.photoURL} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                      {u.avatar || u.name?.[0] || '?'}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{u.name}</p>
+                    <p className="text-xs text-slate-400 truncate">{u.email || u.role}</p>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                    selected ? 'bg-violet-500 border-violet-500' : 'border-slate-300'
+                  }`}>
+                    {selected && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Post-test review */}
+      {activeStep === 3 && (
         <div>
           <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-2">
             <Copy className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
@@ -405,6 +640,17 @@ function CoursePreviewModal({ open, onClose, course, rft }) {
               {course.materialLink}
             </a>
           </div>
+          {course.slideFileUrl && (
+            <div className="mb-3 p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-emerald-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-emerald-700 mb-0.5">Slide File</p>
+                <a href={course.slideFileUrl} target="_blank" rel="noreferrer" className="text-sm text-emerald-700 truncate hover:underline block">
+                  {course.slideFileUrl}
+                </a>
+              </div>
+            </div>
+          )}
           <div className="aspect-video rounded-xl overflow-hidden bg-slate-900">
             <iframe src={course.materialLink} className="w-full h-full" allowFullScreen title="Course Material" />
           </div>
